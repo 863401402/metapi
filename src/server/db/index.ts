@@ -12,12 +12,22 @@ const sqlite = new Database(dbPath);
 sqlite.pragma('journal_mode = WAL');
 sqlite.pragma('foreign_keys = ON');
 
+function tableExists(table: string): boolean {
+  const row = sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
+    .get(table) as { name?: string } | undefined;
+  return !!row?.name;
+}
+
 function tableColumnExists(table: string, column: string): boolean {
   const rows = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
   return rows.some((row) => row.name === column);
 }
 
 function ensureTokenManagementSchema() {
+  if (!tableExists('accounts') || !tableExists('route_channels')) {
+    return;
+  }
+
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS account_tokens (
       id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -78,6 +88,10 @@ function ensureTokenManagementSchema() {
 }
 
 function ensureSiteStatusSchema() {
+  if (!tableExists('sites')) {
+    return;
+  }
+
   if (!tableColumnExists('sites', 'status')) {
     sqlite.exec(`ALTER TABLE sites ADD COLUMN status text DEFAULT 'active';`);
   }
