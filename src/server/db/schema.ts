@@ -7,6 +7,8 @@ export const sites = sqliteTable('sites', {
   url: text('url').notNull(),
   platform: text('platform').notNull(), // 'new-api' | 'one-api' | 'veloera' | 'one-hub' | 'done-hub' | 'sub2api'
   status: text('status').notNull().default('active'), // 'active' | 'disabled'
+  isPinned: integer('is_pinned', { mode: 'boolean' }).default(false),
+  sortOrder: integer('sort_order').default(0),
   apiKey: text('api_key'),
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
@@ -26,6 +28,8 @@ export const accounts = sqliteTable('accounts', {
   unitCost: real('unit_cost'),
   valueScore: real('value_score').default(0),
   status: text('status').default('active'), // 'active' | 'disabled' | 'expired'
+  isPinned: integer('is_pinned', { mode: 'boolean' }).default(false),
+  sortOrder: integer('sort_order').default(0),
   checkinEnabled: integer('checkin_enabled', { mode: 'boolean' }).default(true),
   lastCheckinAt: text('last_checkin_at'),
   lastBalanceRefresh: text('last_balance_refresh'),

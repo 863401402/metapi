@@ -11,19 +11,60 @@ function normalizeSiteStatus(input: unknown): 'active' | 'disabled' | null {
   return null;
 }
 
+function normalizePinnedFlag(input: unknown): boolean | null {
+  if (input === undefined || input === null) return null;
+  if (typeof input === 'boolean') return input;
+  if (typeof input === 'number') return input !== 0;
+  if (typeof input === 'string') {
+    const normalized = input.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1') return true;
+    if (normalized === 'false' || normalized === '0') return false;
+  }
+  return null;
+}
+
+function normalizeSortOrder(input: unknown): number | null {
+  if (input === undefined || input === null || input === '') return null;
+  const parsed = Number.parseInt(String(input), 10);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, parsed);
+}
+
 export async function sitesRoutes(app: FastifyInstance) {
   // List all sites
   app.get('/api/sites', async () => {
-    return db.select().from(schema.sites).all();
+    const siteRows = db.select().from(schema.sites).all();
+    const accountRows = db.select().from(schema.accounts).all();
+
+    const totalBalanceBySiteId: Record<number, number> = {};
+    for (const account of accountRows) {
+      totalBalanceBySiteId[account.siteId] = (totalBalanceBySiteId[account.siteId] || 0) + (account.balance || 0);
+    }
+
+    return siteRows.map((site) => ({
+      ...site,
+      totalBalance: Math.round((totalBalanceBySiteId[site.id] || 0) * 1_000_000) / 1_000_000,
+    }));
   });
 
   // Add a site
-  app.post<{ Body: { name: string; url: string; platform?: string; apiKey?: string; status?: string } }>('/api/sites', async (request, reply) => {
-    const { name, url, platform, apiKey, status } = request.body;
+  app.post<{ Body: { name: string; url: string; platform?: string; apiKey?: string; status?: string; isPinned?: boolean; sortOrder?: number } }>('/api/sites', async (request, reply) => {
+    const { name, url, platform, apiKey, status, isPinned, sortOrder } = request.body;
     const normalizedStatus = normalizeSiteStatus(status);
     if (status !== undefined && !normalizedStatus) {
       return reply.code(400).send({ error: 'Invalid site status. Expected active or disabled.' });
     }
+    const normalizedPinned = normalizePinnedFlag(isPinned);
+    if (isPinned !== undefined && normalizedPinned === null) {
+      return reply.code(400).send({ error: 'Invalid isPinned value. Expected boolean.' });
+    }
+    const normalizedSortOrder = normalizeSortOrder(sortOrder);
+    if (sortOrder !== undefined && normalizedSortOrder === null) {
+      return reply.code(400).send({ error: 'Invalid sortOrder value. Expected non-negative integer.' });
+    }
+
+    const existingSites = db.select().from(schema.sites).all();
+    const maxSortOrder = existingSites.reduce((max, site) => Math.max(max, site.sortOrder || 0), -1);
 
     let detectedPlatform = platform;
     if (!detectedPlatform) {
@@ -39,12 +80,14 @@ export async function sitesRoutes(app: FastifyInstance) {
       platform: detectedPlatform,
       apiKey,
       status: normalizedStatus ?? 'active',
+      isPinned: normalizedPinned ?? false,
+      sortOrder: normalizedSortOrder ?? (maxSortOrder + 1),
     }).returning().get();
     return result;
   });
 
   // Update a site
-  app.put<{ Params: { id: string }; Body: { name?: string; url?: string; platform?: string; apiKey?: string; status?: string } }>('/api/sites/:id', async (request, reply) => {
+  app.put<{ Params: { id: string }; Body: { name?: string; url?: string; platform?: string; apiKey?: string; status?: string; isPinned?: boolean; sortOrder?: number } }>('/api/sites/:id', async (request, reply) => {
     const id = parseInt(request.params.id);
     if (Number.isNaN(id)) {
       return reply.code(400).send({ error: 'Invalid site id' });
@@ -61,12 +104,22 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.status !== undefined && !normalizedStatus) {
       return reply.code(400).send({ error: 'Invalid site status. Expected active or disabled.' });
     }
+    const normalizedPinned = normalizePinnedFlag(body.isPinned);
+    if (body.isPinned !== undefined && normalizedPinned === null) {
+      return reply.code(400).send({ error: 'Invalid isPinned value. Expected boolean.' });
+    }
+    const normalizedSortOrder = normalizeSortOrder(body.sortOrder);
+    if (body.sortOrder !== undefined && normalizedSortOrder === null) {
+      return reply.code(400).send({ error: 'Invalid sortOrder value. Expected non-negative integer.' });
+    }
 
     if (body.name !== undefined) updates.name = body.name;
     if (body.url !== undefined) updates.url = body.url.replace(/\/+$/, '');
     if (body.platform !== undefined) updates.platform = body.platform;
     if (body.apiKey !== undefined) updates.apiKey = body.apiKey;
     if (body.status !== undefined) updates.status = normalizedStatus;
+    if (body.isPinned !== undefined) updates.isPinned = normalizedPinned;
+    if (body.sortOrder !== undefined) updates.sortOrder = normalizedSortOrder;
     updates.updatedAt = new Date().toISOString();
     db.update(schema.sites).set(updates).where(eq(schema.sites.id, id)).run();
 

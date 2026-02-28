@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
+import ModernSelect from '../components/ModernSelect.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
 import { tr } from '../i18n.js';
+import { buildCustomReorderUpdates, sortItemsForDisplay, type SortMode } from './helpers/listSorting.js';
 import {
   buildSiteSaveAction,
   emptySiteForm,
@@ -18,6 +20,9 @@ type SiteRow = {
   platform?: string;
   status?: string;
   apiKey?: string;
+  isPinned?: boolean;
+  sortOrder?: number;
+  totalBalance?: number;
   createdAt?: string;
 };
 
@@ -32,12 +37,15 @@ const platformColors: Record<string, string> = {
 
 export default function Sites() {
   const [sites, setSites] = useState<SiteRow[]>([]);
+  const [sortMode, setSortMode] = useState<SortMode>('custom');
   const [editor, setEditor] = useState<SiteEditorState | null>(null);
   const [form, setForm] = useState<SiteForm>(emptySiteForm());
   const [detecting, setDetecting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
   const [togglingSiteId, setTogglingSiteId] = useState<number | null>(null);
+  const [orderingSiteId, setOrderingSiteId] = useState<number | null>(null);
+  const [pinningSiteId, setPinningSiteId] = useState<number | null>(null);
   const toast = useToast();
 
   const isEditing = editor?.mode === 'edit';
@@ -55,6 +63,11 @@ export default function Sites() {
   useEffect(() => {
     load();
   }, []);
+
+  const sortedSites = useMemo(
+    () => sortItemsForDisplay(sites, sortMode, (site) => site.totalBalance || 0),
+    [sites, sortMode],
+  );
 
   const closeEditor = () => {
     setEditor(null);
@@ -155,13 +168,57 @@ export default function Sites() {
     }
   };
 
+  const handleTogglePin = async (site: SiteRow) => {
+    const nextPinned = !site.isPinned;
+    setPinningSiteId(site.id);
+    try {
+      await api.updateSite(site.id, { isPinned: nextPinned });
+      toast.success(nextPinned ? `站点 "${site.name}" 已置顶` : `站点 "${site.name}" 已取消置顶`);
+      await load();
+    } catch (e: any) {
+      toast.error(e.message || '切换置顶失败');
+    } finally {
+      setPinningSiteId(null);
+    }
+  };
+
+  const handleMoveCustomOrder = async (site: SiteRow, direction: 'up' | 'down') => {
+    const updates = buildCustomReorderUpdates(sites, site.id, direction);
+    if (updates.length === 0) return;
+
+    setOrderingSiteId(site.id);
+    try {
+      await Promise.all(updates.map((update) => api.updateSite(update.id, { sortOrder: update.sortOrder })));
+      await load();
+    } catch (e: any) {
+      toast.error(e.message || '更新排序失败');
+    } finally {
+      setOrderingSiteId(null);
+    }
+  };
+
   return (
     <div className="animate-fade-in">
       <div className="page-header">
         <h2 className="page-title">{tr('站点管理')}</h2>
-        <button onClick={openAdd} className="btn btn-primary">
-          {isAdding ? '取消' : '+ 添加站点'}
-        </button>
+        <div className="page-actions sites-page-actions">
+          <div className="sites-sort-select" style={{ minWidth: 156, position: 'relative', zIndex: 20 }}>
+            <ModernSelect
+              size="sm"
+              value={sortMode}
+              onChange={(nextValue) => setSortMode(nextValue as SortMode)}
+              options={[
+                { value: 'custom', label: '自定义排序' },
+                { value: 'balance-desc', label: '余额高到低' },
+                { value: 'balance-asc', label: '余额低到高' },
+              ]}
+              placeholder="自定义排序"
+            />
+          </div>
+          <button onClick={openAdd} className="btn btn-primary">
+            {isAdding ? '取消' : '+ 添加站点'}
+          </button>
+        </div>
       </div>
 
       {editor && (
@@ -265,19 +322,20 @@ export default function Sites() {
 
       <div className="card" style={{ overflowX: 'auto' }}>
         {sites.length > 0 ? (
-          <table className="data-table">
+          <table className="data-table sites-table">
             <thead>
               <tr>
                 <th>名称</th>
                 <th>URL</th>
+                <th>总余额</th>
                 <th>状态</th>
                 <th>平台</th>
                 <th>创建时间</th>
-                <th style={{ textAlign: 'right' }}>操作</th>
+                <th className="sites-actions-col" style={{ textAlign: 'right' }}>操作</th>
               </tr>
             </thead>
             <tbody>
-              {sites.map((site, i) => (
+              {sortedSites.map((site, i) => (
                 <tr key={site.id} className={`animate-slide-up stagger-${Math.min(i + 1, 5)}`}>
                   <td style={{ fontWeight: 600 }}>
                     <a
@@ -292,11 +350,12 @@ export default function Sites() {
                       {site.name}
                     </a>
                   </td>
-                  <td style={{ maxWidth: 300 }}>
+                  <td className="sites-url-cell" style={{ maxWidth: 300 }}>
                     <a
                       href={site.url}
                       target="_blank"
                       rel="noopener noreferrer"
+                      className="sites-url-link"
                       style={{
                         fontSize: 12,
                         fontFamily: 'var(--font-mono)',
@@ -307,6 +366,9 @@ export default function Sites() {
                     >
                       {site.url}
                     </a>
+                  </td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+                    ${(site.totalBalance || 0).toFixed(2)}
                   </td>
                   <td>
                     <span className={`badge ${site.status === 'disabled' ? 'badge-muted' : 'badge-success'}`} style={{ fontSize: 11 }}>
@@ -335,8 +397,33 @@ export default function Sites() {
                       {formatDateTimeLocal(site.createdAt)}
                     </a>
                   </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+                  <td className="sites-actions-cell" style={{ textAlign: 'right' }}>
+                    <div className="sites-row-actions">
+                      <button
+                        onClick={() => handleTogglePin(site)}
+                        disabled={pinningSiteId === site.id}
+                        className={`btn btn-link ${site.isPinned ? 'btn-link-warning' : 'btn-link-primary'}`}
+                      >
+                        {pinningSiteId === site.id ? <span className="spinner spinner-sm" /> : (site.isPinned ? '取消置顶' : '置顶')}
+                      </button>
+                      {sortMode === 'custom' && (
+                        <>
+                          <button
+                            onClick={() => handleMoveCustomOrder(site, 'up')}
+                            disabled={orderingSiteId === site.id}
+                            className="btn btn-link btn-link-muted"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            onClick={() => handleMoveCustomOrder(site, 'down')}
+                            disabled={orderingSiteId === site.id}
+                            className="btn btn-link btn-link-muted"
+                          >
+                            ↓
+                          </button>
+                        </>
+                      )}
                       <button
                         onClick={() => openEdit(site)}
                         className="btn btn-link btn-link-primary"

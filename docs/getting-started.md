@@ -43,7 +43,9 @@ services:
 ### 3. 设置令牌并启动
 
 ```bash
+# AUTH_TOKEN = 管理后台初始管理员令牌（登录后台时输入这个值）
 export AUTH_TOKEN=your-admin-token
+# PROXY_TOKEN = 下游客户端调用 /v1/* 使用的令牌
 export PROXY_TOKEN=your-proxy-sk-token
 docker compose up -d
 ```
@@ -51,6 +53,11 @@ docker compose up -d
 ### 4. 访问管理后台
 
 打开 `http://localhost:4000`，使用 `AUTH_TOKEN` 的值登录。
+
+> [!TIP]
+> 初始管理员令牌就是启动时配置的 `AUTH_TOKEN`。  
+> 如果未显式设置（非 Compose 场景），默认值为 `change-me-admin-token`（仅建议本地调试）。  
+> 若你在后台「设置」里修改过管理员令牌，后续登录请使用新令牌。
 
 ## 方式二：本地开发启动
 

@@ -22,9 +22,9 @@ function parseCsvList(value: string | undefined): string[] {
 }
 
 export const config = {
-  authToken: process.env.AUTH_TOKEN || 'change-me',
-  proxyToken: process.env.PROXY_TOKEN || 'change-me-proxy',
-  accountCredentialSecret: process.env.ACCOUNT_CREDENTIAL_SECRET || process.env.AUTH_TOKEN || 'change-me',
+  authToken: process.env.AUTH_TOKEN || 'change-me-admin-token',
+  proxyToken: process.env.PROXY_TOKEN || 'change-me-proxy-sk-token',
+  accountCredentialSecret: process.env.ACCOUNT_CREDENTIAL_SECRET || process.env.AUTH_TOKEN || 'change-me-admin-token',
   checkinCron: process.env.CHECKIN_CRON || '0 8 * * *',
   balanceRefreshCron: process.env.BALANCE_REFRESH_CRON || '0 * * * *',
   webhookUrl: process.env.WEBHOOK_URL || '',

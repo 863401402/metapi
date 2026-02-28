@@ -31,6 +31,31 @@ type AccountHealthRefreshResult = {
   message: string;
 };
 
+function normalizePinnedFlag(input: unknown): boolean | null {
+  if (input === undefined || input === null) return null;
+  if (typeof input === 'boolean') return input;
+  if (typeof input === 'number') return input !== 0;
+  if (typeof input === 'string') {
+    const normalized = input.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1') return true;
+    if (normalized === 'false' || normalized === '0') return false;
+  }
+  return null;
+}
+
+function normalizeSortOrder(input: unknown): number | null {
+  if (input === undefined || input === null || input === '') return null;
+  const parsed = Number.parseInt(String(input), 10);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, parsed);
+}
+
+function getNextAccountSortOrder(): number {
+  const rows = db.select({ sortOrder: schema.accounts.sortOrder }).from(schema.accounts).all();
+  const max = rows.reduce((currentMax, row) => Math.max(currentMax, row.sortOrder || 0), -1);
+  return max + 1;
+}
+
 function summarizeAccountHealthRefresh(results: AccountHealthRefreshResult[]) {
   return {
     total: results.length,
@@ -246,6 +271,8 @@ export async function accountsRoutes(app: FastifyInstance) {
         apiToken: preferredApiToken || undefined,
         checkinEnabled: true,
         extraConfig,
+        isPinned: false,
+        sortOrder: getNextAccountSortOrder(),
       }).returning().get();
       accountId = created.id;
     }
@@ -435,6 +462,8 @@ export async function accountsRoutes(app: FastifyInstance) {
       apiToken: apiToken || undefined,
       checkinEnabled: tokenType === 'session' ? (body.checkinEnabled ?? true) : false,
       extraConfig,
+      isPinned: false,
+      sortOrder: getNextAccountSortOrder(),
     }).returning().get();
 
     if (apiToken) {
@@ -469,13 +498,30 @@ export async function accountsRoutes(app: FastifyInstance) {
   });
 
   // Update an account
-  app.put<{ Params: { id: string }; Body: any }>('/api/accounts/:id', async (request) => {
+  app.put<{ Params: { id: string }; Body: any }>('/api/accounts/:id', async (request, reply) => {
     const id = parseInt(request.params.id);
     const body = request.body as Record<string, unknown>;
     const updates: any = {};
     for (const key of ['username', 'accessToken', 'apiToken', 'status', 'checkinEnabled', 'unitCost', 'extraConfig']) {
       if (body[key] !== undefined) updates[key] = body[key];
     }
+
+    if (body.isPinned !== undefined) {
+      const normalizedPinned = normalizePinnedFlag(body.isPinned);
+      if (normalizedPinned === null) {
+        return reply.code(400).send({ message: 'Invalid isPinned value. Expected boolean.' });
+      }
+      updates.isPinned = normalizedPinned;
+    }
+
+    if (body.sortOrder !== undefined) {
+      const normalizedSortOrder = normalizeSortOrder(body.sortOrder);
+      if (normalizedSortOrder === null) {
+        return reply.code(400).send({ message: 'Invalid sortOrder value. Expected non-negative integer.' });
+      }
+      updates.sortOrder = normalizedSortOrder;
+    }
+
     updates.updatedAt = new Date().toISOString();
     db.update(schema.accounts).set(updates).where(eq(schema.accounts.id, id)).run();
 

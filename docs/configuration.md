@@ -12,8 +12,8 @@
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `AUTH_TOKEN` | 管理后台登录令牌 | `change-me` |
-| `PROXY_TOKEN` | 代理接口 Bearer Token（下游客户端使用此值作为 API Key） | `change-me-proxy` |
+| `AUTH_TOKEN` | 管理后台登录令牌 | `change-me-admin-token` |
+| `PROXY_TOKEN` | 代理接口 Bearer Token（下游客户端使用此值作为 API Key） | `change-me-proxy-sk-token` |
 
 ## 基础配置
 

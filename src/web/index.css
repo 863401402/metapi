@@ -1196,6 +1196,45 @@ body {
   font-size: 12px;
 }
 
+.accounts-actions-col {
+  min-width: 220px;
+}
+
+.accounts-actions-cell {
+  white-space: normal !important;
+}
+
+.accounts-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.sites-actions-col {
+  min-width: 200px;
+}
+
+.sites-actions-cell {
+  white-space: normal !important;
+}
+
+.sites-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.sites-url-cell {
+  white-space: normal !important;
+}
+
+.sites-url-link {
+  display: inline-block;
+  max-width: 100%;
+}
+
 /* ===== Status Badge ===== */
 .badge {
   display: inline-flex;
@@ -1452,6 +1491,16 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.accounts-page-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.sites-page-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 /* ===== Chart Placeholder ===== */
@@ -2681,8 +2730,103 @@ textarea {
   background: var(--color-bg);
 }
 
+@media (max-width: 1280px) {
+  .accounts-page-actions {
+    gap: 6px;
+  }
+
+  .accounts-page-actions .btn-soft-primary,
+  .accounts-page-actions .btn-primary {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  .accounts-actions-col {
+    min-width: 180px;
+  }
+
+  .accounts-table th,
+  .accounts-table td {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .accounts-row-actions .btn-link {
+    padding: 3px 6px;
+    font-size: 11px;
+  }
+
+  .sites-actions-col {
+    min-width: 165px;
+  }
+
+  .sites-table th,
+  .sites-table td {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .sites-row-actions .btn-link {
+    padding: 3px 6px;
+    font-size: 11px;
+  }
+}
+
 /* ===== Responsive Adjustments ===== */
 @media (max-width: 900px) {
+  .accounts-page-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .accounts-page-actions .accounts-sort-select {
+    flex: 1 1 100%;
+    min-width: 0 !important;
+  }
+
+  .accounts-page-actions .btn-soft-primary,
+  .accounts-page-actions .btn-primary {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+    justify-content: center;
+  }
+
+  .accounts-actions-col {
+    min-width: 150px;
+  }
+
+  .accounts-table th:nth-child(5),
+  .accounts-table td:nth-child(5) {
+    display: none;
+  }
+
+  .sites-page-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .sites-page-actions .sites-sort-select {
+    flex: 1 1 100%;
+    min-width: 0 !important;
+  }
+
+  .sites-page-actions .btn-primary {
+    flex: 1 1 100%;
+    min-width: 0;
+    justify-content: center;
+  }
+
+  .sites-actions-col {
+    min-width: 140px;
+  }
+
+  .sites-table th:nth-child(2),
+  .sites-table td:nth-child(2),
+  .sites-table th:nth-child(6),
+  .sites-table td:nth-child(6) {
+    display: none;
+  }
+
   .filter-panel {
     display: none;
   }

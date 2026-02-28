@@ -17,11 +17,12 @@
 
 ### Q: 登录失败，提示令牌无效
 
-**A:** 检查 `AUTH_TOKEN` 是否与部署环境一致。注意：
+**A:** 先确认你输入的是“管理员令牌”而不是代理令牌。登录后台使用的是 `AUTH_TOKEN`，注意：
 
-- 使用 `.env` 文件时，确认文件路径正确
-- 不要混用 `.env.example` 的默认值
-- 环境变量中的值不需要加引号
+- 初始管理员令牌 = 启动时设置的 `AUTH_TOKEN`
+- 如果你在非 Compose 场景未显式设置 `AUTH_TOKEN`，默认值是 `change-me-admin-token`（仅建议本地调试）
+- 若复用旧 `data/` 目录，系统会优先读取数据库中的 `auth_token` 设置（可能覆盖当前环境变量）
+- 使用 `.env` 文件时，确认文件路径正确，且值不需要加引号
 
 ### Q: Docker Compose 启动报错 `AUTH_TOKEN is required`
 

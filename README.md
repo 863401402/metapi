@@ -210,7 +210,9 @@ services:
 EOF
 
 # 设置令牌并启动
+# AUTH_TOKEN = 管理后台初始管理员令牌（登录后台时输入这个值）
 export AUTH_TOKEN=your-admin-token
+# PROXY_TOKEN = 下游客户端调用 /v1/* 使用的令牌
 export PROXY_TOKEN=your-proxy-sk-token
 docker compose up -d
 ```
@@ -235,6 +237,11 @@ docker run -d --name metapi \
 
 > [!IMPORTANT]
 > 请务必修改 `AUTH_TOKEN` 和 `PROXY_TOKEN`，不要使用默认值。数据存储在 `./data` 目录中，升级不影响已有数据。
+
+> [!TIP]
+> 初始管理员令牌就是启动时配置的 `AUTH_TOKEN`。  
+> 如果是非 Compose 场景且你没有显式设置 `AUTH_TOKEN`，默认值为 `change-me-admin-token`（仅用于本地调试）。  
+> 若你在后台「设置」里修改过管理员令牌，后续登录请使用修改后的新令牌。
 
 ### 升级
 
@@ -266,8 +273,8 @@ docker compose pull && docker compose up -d && docker image prune -f
 
 | 变量名                        | 说明                                        | 默认值                  |
 | ----------------------------- | ------------------------------------------- | ----------------------- |
-| `AUTH_TOKEN`                | 管理后台登录令牌（**必须修改**）      | `change-me`           |
-| `PROXY_TOKEN`               | 代理 API Bearer Token（**必须修改**） | `change-me-proxy`     |
+| `AUTH_TOKEN`                | 管理后台登录令牌（**必须修改**）      | `change-me-admin-token`           |
+| `PROXY_TOKEN`               | 代理 API Bearer Token（**必须修改**） | `change-me-proxy-sk-token`     |
 | `PORT`                      | 服务监听端口                                | `4000`                |
 | `DATA_DIR`                  | 数据目录（SQLite 数据库）                   | `./data`              |
 | `TZ`                        | 时区                                        | `Asia/Shanghai`       |

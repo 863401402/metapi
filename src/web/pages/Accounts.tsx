@@ -1,13 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { getAccountsAddPanelStyle } from './helpers/accountsPanelStyle.js';
 import { tr } from '../i18n.js';
+import { buildCustomReorderUpdates, sortItemsForDisplay, type SortMode } from './helpers/listSorting.js';
 
 export default function Accounts() {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [sites, setSites] = useState<any[]>([]);
+  const [sortMode, setSortMode] = useState<SortMode>('custom');
   const [showAdd, setShowAdd] = useState(false);
   const [addMode, setAddMode] = useState<'token' | 'login'>('token');
   const [loginForm, setLoginForm] = useState({ siteId: 0, username: '', password: '' });
@@ -23,6 +25,11 @@ export default function Accounts() {
     api.getSites().then(setSites);
   };
   useEffect(() => { load(); }, []);
+
+  const sortedAccounts = useMemo(
+    () => sortItemsForDisplay(accounts, sortMode, (account) => account.balance || 0),
+    [accounts, sortMode],
+  );
 
   const handleLoginAdd = async () => {
     if (!loginForm.siteId || !loginForm.username || !loginForm.password) return;
@@ -171,11 +178,55 @@ export default function Accounts() {
     }
   };
 
+  const handleTogglePin = async (account: any) => {
+    const key = `pin-toggle-${account.id}`;
+    const nextPinned = !account.isPinned;
+    setActionLoading((s) => ({ ...s, [key]: true }));
+    try {
+      await api.updateAccount(account.id, { isPinned: nextPinned });
+      toast.success(nextPinned ? '账号已置顶' : '账号已取消置顶');
+      load();
+    } catch (e: any) {
+      toast.error(e.message || '切换账号置顶失败');
+    } finally {
+      setActionLoading((s) => ({ ...s, [key]: false }));
+    }
+  };
+
+  const handleMoveCustomOrder = async (account: any, direction: 'up' | 'down') => {
+    const key = `reorder-${account.id}`;
+    const updates = buildCustomReorderUpdates(accounts, account.id, direction);
+    if (updates.length === 0) return;
+
+    setActionLoading((s) => ({ ...s, [key]: true }));
+    try {
+      await Promise.all(updates.map((update) => api.updateAccount(update.id, { sortOrder: update.sortOrder })));
+      load();
+    } catch (e: any) {
+      toast.error(e.message || '更新账号排序失败');
+    } finally {
+      setActionLoading((s) => ({ ...s, [key]: false }));
+    }
+  };
+
   return (
     <div className="animate-fade-in">
       <div className="page-header">
         <h2 className="page-title">{tr('账号管理')}</h2>
-        <div className="page-actions">
+        <div className="page-actions accounts-page-actions">
+          <div className="accounts-sort-select" style={{ minWidth: 156, position: 'relative', zIndex: 20 }}>
+            <ModernSelect
+              size="sm"
+              value={sortMode}
+              onChange={(nextValue) => setSortMode(nextValue as SortMode)}
+              options={[
+                { value: 'custom', label: '自定义排序' },
+                { value: 'balance-desc', label: '余额高到低' },
+                { value: 'balance-asc', label: '余额低到高' },
+              ]}
+              placeholder="自定义排序"
+            />
+          </div>
           <button onClick={() => withLoading('checkin-all', () => api.triggerCheckinAll(), '已触发全部签到')} disabled={actionLoading['checkin-all']}
             className="btn btn-soft-primary">
             {actionLoading['checkin-all'] ? <><span className="spinner spinner-sm" />{tr('签到中...')}</> : tr('全部签到')}
@@ -342,7 +393,7 @@ export default function Accounts() {
       {/* Accounts Table */}
       <div className="card" style={{ overflowX: 'auto' }}>
         {accounts.length > 0 ? (
-          <table className="data-table">
+          <table className="data-table accounts-table">
             <thead>
               <tr>
                 <th>用户名</th>
@@ -351,11 +402,11 @@ export default function Accounts() {
                 <th>余额</th>
                 <th>已用</th>
                 <th>签到</th>
-                <th style={{ textAlign: 'right' }}>操作</th>
+                <th className="accounts-actions-col" style={{ textAlign: 'right' }}>操作</th>
               </tr>
             </thead>
             <tbody>
-              {accounts.map((a: any, i: number) => (
+              {sortedAccounts.map((a: any, i: number) => (
                 <tr key={a.id} className={`animate-slide-up stagger-${Math.min(i + 1, 5)}`}>
                   <td style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{a.username || '未命名'}</td>
                   <td>
@@ -427,8 +478,33 @@ export default function Accounts() {
                         : (a.checkinEnabled ? '开启' : '关闭')}
                     </button>
                   </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+                  <td className="accounts-actions-cell" style={{ textAlign: 'right' }}>
+                    <div className="accounts-row-actions">
+                      <button
+                        onClick={() => handleTogglePin(a)}
+                        disabled={!!actionLoading[`pin-toggle-${a.id}`]}
+                        className={`btn btn-link ${a.isPinned ? 'btn-link-warning' : 'btn-link-primary'}`}
+                      >
+                        {actionLoading[`pin-toggle-${a.id}`] ? <span className="spinner spinner-sm" /> : (a.isPinned ? '取消置顶' : '置顶')}
+                      </button>
+                      {sortMode === 'custom' && (
+                        <>
+                          <button
+                            onClick={() => handleMoveCustomOrder(a, 'up')}
+                            disabled={!!actionLoading[`reorder-${a.id}`]}
+                            className="btn btn-link btn-link-muted"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            onClick={() => handleMoveCustomOrder(a, 'down')}
+                            disabled={!!actionLoading[`reorder-${a.id}`]}
+                            className="btn btn-link btn-link-muted"
+                          >
+                            ↓
+                          </button>
+                        </>
+                      )}
                       <button onClick={() => withLoading(`refresh-${a.id}`, () => api.refreshBalance(a.id), '余额已刷新')} disabled={actionLoading[`refresh-${a.id}`]}
                         className="btn btn-link btn-link-primary">
                         {actionLoading[`refresh-${a.id}`] ? <span className="spinner spinner-sm" /> : '刷新'}
