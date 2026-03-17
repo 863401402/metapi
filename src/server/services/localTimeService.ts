@@ -20,9 +20,14 @@ export function formatUtcSqlDateTime(value: Date): string {
   return `${value.getUTCFullYear()}-${pad2(value.getUTCMonth() + 1)}-${pad2(value.getUTCDate())} ${pad2(value.getUTCHours())}:${pad2(value.getUTCMinutes())}:${pad2(value.getUTCSeconds())}`;
 }
 
-export function parseStoredUtcDateTime(raw: string | null | undefined): Date | null {
-  if (!raw) return null;
-  const text = raw.trim();
+export function parseStoredUtcDateTime(raw: unknown): Date | null {
+  if (raw == null) return null;
+  if (raw instanceof Date) return isNaN(raw.getTime()) ? null : raw;
+  if (typeof raw === 'number') {
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const text = String(raw).trim();
   if (!text) return null;
 
   let parsed: Date;
