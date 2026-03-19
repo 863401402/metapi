@@ -29,7 +29,8 @@ import type {
 import type { RouteCandidateView, RouteTokenOption } from '../helpers/routeModelCandidatesIndex.js';
 import { SortableChannelRow } from './SortableChannelRow.js';
 import {
-  isExactModelPattern,
+  isRouteExactModel,
+  isExplicitGroupRoute,
   resolveRouteTitle,
   resolveRouteIcon,
   buildSourceGroupKey,
@@ -113,8 +114,11 @@ function RouteCardInner({
   onToggleSourceGroup,
 }: RouteCardProps) {
   const routeIcon = resolveRouteIcon(route);
-  const exactRoute = isExactModelPattern(route.modelPattern);
+  const exactRoute = isRouteExactModel(route);
+  const explicitGroupRoute = isExplicitGroupRoute(route);
+  const explicitGroupSourceCount = Array.isArray(route.sourceRouteIds) ? route.sourceRouteIds.length : 0;
   const readOnlyRoute = route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true;
+  const channelManagementDisabled = explicitGroupRoute;
   const title = resolveRouteTitle(route);
   const routingStrategy = route.routingStrategy === 'round_robin' ? 'round_robin' : 'weighted';
   const routingStrategyOptions = [
@@ -173,11 +177,11 @@ function RouteCardInner({
               <BrandGlyph icon={routeIcon.value} alt={title} size={18} fallbackText={title} />
             ) : routeIcon.kind === 'text' ? (
               <span style={{ fontSize: 14, lineHeight: 1 }}>{routeIcon.value}</span>
-            ) : brand ? (
+            ) : routeIcon.kind === 'auto' && brand ? (
               <BrandGlyph brand={brand} alt={title} size={18} fallbackText={title} />
-            ) : (
+            ) : routeIcon.kind === 'auto' ? (
               <InlineBrandIcon model={route.modelPattern} size={18} />
-            )}
+            ) : null}
           </span>
 
           <code style={{ fontWeight: 600, fontSize: 13, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
@@ -203,9 +207,20 @@ function RouteCardInner({
             </button>
           )}
 
-          <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0 }}>
-            {route.channelCount} {tr('通道')}
-          </span>
+          {explicitGroupRoute && explicitGroupSourceCount > 0 ? (
+            <>
+              <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0 }}>
+                {explicitGroupSourceCount} {tr('来源模型')}
+              </span>
+              <span className="badge badge-muted" style={{ fontSize: 10, flexShrink: 0 }}>
+                {route.channelCount} {tr('通道')}
+              </span>
+            </>
+          ) : (
+            <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0 }}>
+              {route.channelCount} {tr('通道')}
+            </span>
+          )}
 
           {readOnlyRoute ? (
             <span className="badge badge-warning" style={{ fontSize: 10, flexShrink: 0 }}>
@@ -242,11 +257,11 @@ function RouteCardInner({
               <span style={{ width: 20, height: 20, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, background: 'var(--color-bg-card)', fontSize: 14, lineHeight: 1 }}>
                 {routeIcon.value}
               </span>
-            ) : brand ? (
+            ) : routeIcon.kind === 'auto' && brand ? (
               <BrandGlyph brand={brand} alt={title} size={20} fallbackText={title} />
-            ) : (
+            ) : routeIcon.kind === 'auto' ? (
               <InlineBrandIcon model={route.modelPattern} size={20} />
-            )}
+            ) : null}
             {title}
           </code>
           {route.displayName && route.displayName.trim() !== route.modelPattern ? (
@@ -266,9 +281,20 @@ function RouteCardInner({
               {route.enabled ? tr('启用') : tr('禁用')}
             </button>
           )}
-          <span className="badge badge-info" style={{ fontSize: 10 }}>
-            {route.channelCount} {tr('通道')}
-          </span>
+          {explicitGroupRoute && explicitGroupSourceCount > 0 ? (
+            <>
+              <span className="badge badge-info" style={{ fontSize: 10 }}>
+                {explicitGroupSourceCount} {tr('来源模型')}
+              </span>
+              <span className="badge badge-muted" style={{ fontSize: 10 }}>
+                {route.channelCount} {tr('通道')}
+              </span>
+            </>
+          ) : (
+            <span className="badge badge-info" style={{ fontSize: 10 }}>
+              {route.channelCount} {tr('通道')}
+            </span>
+          )}
           {readOnlyRoute && (
             <span className="badge badge-warning" style={{ fontSize: 10 }}>
               {tr('0 通道')}
@@ -280,7 +306,7 @@ function RouteCardInner({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {!readOnlyRoute && !exactRoute && (
+          {!readOnlyRoute && (explicitGroupRoute || !exactRoute) && (
             <button onClick={() => onEdit(route)} className="btn btn-link">{tr('编辑群组')}</button>
           )}
           {!readOnlyRoute && <button onClick={() => onDelete(route.id)} className="btn btn-link btn-link-danger">{tr('删除路由')}</button>}
@@ -301,11 +327,15 @@ function RouteCardInner({
         </div>
       </div>
 
-      {!exactRoute && (
+      {explicitGroupRoute ? (
+        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>
+          {tr('该群组会将多个来源模型聚合为一个对外模型名；通道信息继承自来源模型，当前仅支持查看，不支持直接维护。')}
+        </div>
+      ) : !exactRoute ? (
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>
           {tr('通配符路由按请求实时决策；概率解释在当前路由内统一估算。')}
         </div>
-      )}
+      ) : null}
 
       {!readOnlyRoute && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -328,7 +358,7 @@ function RouteCardInner({
 
       {/* Missing token hints + Add channel button */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-        {(missingTokenSiteItems.length > 0 || missingTokenGroupItems.length > 0) ? (
+        {!channelManagementDisabled && (missingTokenSiteItems.length > 0 || missingTokenGroupItems.length > 0) ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
             {missingTokenSiteItems.length > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -366,7 +396,7 @@ function RouteCardInner({
             )}
           </div>
         ) : <div />}
-        {!readOnlyRoute && (
+        {!readOnlyRoute && !channelManagementDisabled && (
           <button
             onClick={() => onAddChannel(route.id)}
             className="btn btn-ghost"
@@ -437,28 +467,54 @@ function RouteCardInner({
                     ) : null}
 
                     <AnimatedCollapseSection open={isGroupExpanded}>
-                      <SortableContext items={group.channels.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-                        {group.channels.map((channel) => {
-                          const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
-                          const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
-                          return (
-                            <SortableChannelRow
-                              key={channel.id}
-                              channel={channel}
-                              decisionCandidate={decisionMap.get(channel.id)}
-                              isExactRoute={exactRoute}
-                              loadingDecision={loadingDecision}
-                              isSavingPriority={savingPriority}
-                              tokenOptions={tokenOptions}
-                              activeTokenId={activeTokenId}
-                              isUpdatingToken={!!updatingChannel[channel.id]}
-                              onTokenDraftChange={onTokenDraftChange}
-                              onSaveToken={() => onSaveToken(route.id, channel.id, channel.accountId)}
-                              onDeleteChannel={() => onDeleteChannel(channel.id, route.id)}
-                            />
-                          );
-                        })}
-                      </SortableContext>
+                      {explicitGroupRoute ? (
+                        <SortableContext items={group.channels.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+                          {group.channels.map((channel) => {
+                            const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
+                            const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
+                            return (
+                              <SortableChannelRow
+                                key={channel.id}
+                                channel={channel}
+                                decisionCandidate={decisionMap.get(channel.id)}
+                                isExactRoute={exactRoute}
+                                loadingDecision={loadingDecision}
+                                isSavingPriority={!!savingPriority}
+                                readOnly
+                                tokenOptions={tokenOptions}
+                                activeTokenId={activeTokenId}
+                                isUpdatingToken={!!updatingChannel[channel.id]}
+                                onTokenDraftChange={onTokenDraftChange}
+                                onSaveToken={() => onSaveToken(route.id, channel.id, channel.accountId)}
+                                onDeleteChannel={() => onDeleteChannel(channel.id, route.id)}
+                              />
+                            );
+                          })}
+                        </SortableContext>
+                      ) : (
+                        <SortableContext items={group.channels.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+                          {group.channels.map((channel) => {
+                            const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
+                            const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
+                            return (
+                              <SortableChannelRow
+                                key={channel.id}
+                                channel={channel}
+                                decisionCandidate={decisionMap.get(channel.id)}
+                                isExactRoute={exactRoute}
+                                loadingDecision={loadingDecision}
+                                isSavingPriority={savingPriority}
+                                tokenOptions={tokenOptions}
+                                activeTokenId={activeTokenId}
+                                isUpdatingToken={!!updatingChannel[channel.id]}
+                                onTokenDraftChange={onTokenDraftChange}
+                                onSaveToken={() => onSaveToken(route.id, channel.id, channel.accountId)}
+                                onDeleteChannel={() => onDeleteChannel(channel.id, route.id)}
+                              />
+                            );
+                          })}
+                        </SortableContext>
+                      )}
                     </AnimatedCollapseSection>
                     {!isGroupExpanded && (
                       <div style={{ fontSize: 11, color: 'var(--color-text-muted)', paddingLeft: 6 }}>

@@ -252,6 +252,26 @@ export type OAuthProviderInfo = {
   platform: string;
   enabled: boolean;
   loginType: 'oauth';
+  requiresProjectId: boolean;
+  supportsDirectAccountRouting: boolean;
+  supportsCloudValidation: boolean;
+  supportsNativeProxy: boolean;
+};
+
+export type OAuthStartInstructions = {
+  redirectUri: string;
+  callbackPort: number;
+  callbackPath: string;
+  manualCallbackDelayMs: number;
+  sshTunnelCommand?: string;
+  sshTunnelKeyCommand?: string;
+};
+
+export type OAuthStartResponse = {
+  provider: string;
+  state: string;
+  authorizationUrl: string;
+  instructions: OAuthStartInstructions;
 };
 
 export type OAuthSessionInfo = {
@@ -263,6 +283,33 @@ export type OAuthSessionInfo = {
   error?: string;
 };
 
+export type OAuthQuotaWindowInfo = {
+  supported: boolean;
+  limit?: number | null;
+  used?: number | null;
+  remaining?: number | null;
+  resetAt?: string | null;
+  message?: string | null;
+};
+
+export type OAuthQuotaInfo = {
+  status: 'supported' | 'unsupported' | 'error';
+  source: 'official' | 'reverse_engineered';
+  lastSyncAt?: string | null;
+  lastError?: string | null;
+  providerMessage?: string | null;
+  subscription?: {
+    planType?: string | null;
+    activeStart?: string | null;
+    activeUntil?: string | null;
+  } | null;
+  windows: {
+    fiveHour: OAuthQuotaWindowInfo;
+    sevenDay: OAuthQuotaWindowInfo;
+  };
+  lastLimitResetAt?: string | null;
+};
+
 export type OAuthConnectionInfo = {
   accountId: number;
   siteId: number;
@@ -271,13 +318,22 @@ export type OAuthConnectionInfo = {
   email?: string | null;
   accountKey?: string | null;
   planType?: string | null;
+  projectId?: string | null;
   modelCount: number;
   modelsPreview: string[];
   status: 'healthy' | 'abnormal';
+  quota?: OAuthQuotaInfo | null;
   routeChannelCount?: number;
   lastModelSyncAt?: string | null;
   lastModelSyncError?: string | null;
   site?: { id: number; name: string; url: string; platform: string } | null;
+};
+
+export type OAuthConnectionsResponse = {
+  items: OAuthConnectionInfo[];
+  total: number;
+  limit: number;
+  offset: number;
 };
 
 export const api = {
@@ -393,16 +449,25 @@ export const api = {
 
   // OAuth
   getOAuthProviders: () => request('/api/oauth/providers') as Promise<{ providers: OAuthProviderInfo[] }>,
-  startOAuthProvider: (provider: string, data?: { accountId?: number }) => request(`/api/oauth/providers/${encodeURIComponent(provider)}/start`, {
+  startOAuthProvider: (provider: string, data?: { accountId?: number; projectId?: string }) => request(`/api/oauth/providers/${encodeURIComponent(provider)}/start`, {
     method: 'POST',
     body: JSON.stringify(data || {}),
-  }) as Promise<{ provider: string; state: string; authorizationUrl: string }>,
+  }) as Promise<OAuthStartResponse>,
   getOAuthSession: (state: string) => request(`/api/oauth/sessions/${encodeURIComponent(state)}`) as Promise<OAuthSessionInfo>,
-  getOAuthConnections: () => request('/api/oauth/connections') as Promise<{ items: OAuthConnectionInfo[] }>,
+  submitOAuthManualCallback: (state: string, callbackUrl: string) => request(`/api/oauth/sessions/${encodeURIComponent(state)}/manual-callback`, {
+    method: 'POST',
+    body: JSON.stringify({ callbackUrl }),
+  }) as Promise<{ success: true }>,
+  getOAuthConnections: (params?: { limit?: number; offset?: number }) =>
+    request(`/api/oauth/connections${buildQueryString(params)}`) as Promise<OAuthConnectionsResponse>,
+  refreshOAuthConnectionQuota: (accountId: number) => request(`/api/oauth/connections/${accountId}/quota/refresh`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }) as Promise<{ success: true; quota: OAuthQuotaInfo }>,
   rebindOAuthConnection: (accountId: number) => request(`/api/oauth/connections/${accountId}/rebind`, {
     method: 'POST',
     body: JSON.stringify({}),
-  }) as Promise<{ provider: string; state: string; authorizationUrl: string }>,
+  }) as Promise<OAuthStartResponse>,
   deleteOAuthConnection: (accountId: number) => request(`/api/oauth/connections/${accountId}`, {
     method: 'DELETE',
   }) as Promise<{ success: true }>,

@@ -14,11 +14,16 @@ const resolveProxyUsageWithSelfLogFallbackMock = vi.fn(async ({ usage }: any) =>
   estimatedCostFromQuota: 0,
   recoveredFromSelfLog: false,
 }));
-const refreshCodexAccessTokenMock = vi.fn();
+const refreshOauthAccessTokenSingleflightMock = vi.fn();
+const recordOauthQuotaResetHintMock = vi.fn();
+const insertedProxyLogs: Record<string, unknown>[] = [];
 const dbInsertMock = vi.fn((_arg?: any) => ({
-  values: () => ({
-    run: () => undefined,
-  }),
+  values: (values: Record<string, unknown>) => {
+    insertedProxyLogs.push(values);
+    return {
+      run: () => undefined,
+    };
+  },
 }));
 
 vi.mock('undici', () => ({
@@ -61,13 +66,13 @@ vi.mock('../../services/proxyUsageFallbackService.js', () => ({
   resolveProxyUsageWithSelfLogFallback: (arg: any) => resolveProxyUsageWithSelfLogFallbackMock(arg),
 }));
 
-vi.mock('../../services/oauth/service.js', async () => {
-  const actual = await vi.importActual<typeof import('../../services/oauth/service.js')>('../../services/oauth/service.js');
-  return {
-    ...actual,
-    refreshCodexOauthAccessToken: (...args: unknown[]) => refreshCodexAccessTokenMock(...args),
-  };
-});
+vi.mock('../../services/oauth/refreshSingleflight.js', () => ({
+  refreshOauthAccessTokenSingleflight: (...args: unknown[]) => refreshOauthAccessTokenSingleflightMock(...args),
+}));
+
+vi.mock('../../services/oauth/quota.js', () => ({
+  recordOauthQuotaResetHint: (...args: unknown[]) => recordOauthQuotaResetHintMock(...args),
+}));
 
 vi.mock('../../db/index.js', () => ({
   db: {
@@ -81,6 +86,21 @@ vi.mock('../../db/index.js', () => ({
 
 describe('responses proxy codex oauth refresh', () => {
   let app: FastifyInstance;
+
+  const createSseResponse = (chunks: string[], status = 200) => {
+    const encoder = new TextEncoder();
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    }), {
+      status,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    });
+  };
 
   beforeAll(async () => {
     const { responsesProxyRoute } = await import('./responses.js');
@@ -98,8 +118,10 @@ describe('responses proxy codex oauth refresh', () => {
     reportProxyAllFailedMock.mockReset();
     reportTokenExpiredMock.mockReset();
     resolveProxyUsageWithSelfLogFallbackMock.mockClear();
-    refreshCodexAccessTokenMock.mockReset();
+    refreshOauthAccessTokenSingleflightMock.mockReset();
+    recordOauthQuotaResetHintMock.mockReset();
     dbInsertMock.mockClear();
+    insertedProxyLogs.length = 0;
 
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
@@ -122,7 +144,7 @@ describe('responses proxy codex oauth refresh', () => {
       actualModel: 'gpt-5.2-codex',
     });
     selectNextChannelMock.mockReturnValue(null);
-    refreshCodexAccessTokenMock.mockResolvedValue({
+    refreshOauthAccessTokenSingleflightMock.mockResolvedValue({
       accessToken: 'fresh-access-token',
       accountId: 33,
       accountKey: 'chatgpt-account-123',
@@ -156,6 +178,9 @@ describe('responses proxy codex oauth refresh', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/v1/responses',
+      headers: {
+        'user-agent': 'CodexClient/1.0',
+      },
       payload: {
         model: 'gpt-5.2-codex',
         input: 'hello codex',
@@ -163,7 +188,7 @@ describe('responses proxy codex oauth refresh', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(refreshCodexAccessTokenMock).toHaveBeenCalledWith(33);
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(33);
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
     const [firstUrl, firstOptions] = fetchMock.mock.calls[0] as [string, any];
@@ -174,6 +199,12 @@ describe('responses proxy codex oauth refresh', () => {
     expect(secondOptions.headers.Authorization).toBe('Bearer fresh-access-token');
     expect(secondOptions.headers.Originator || secondOptions.headers.originator).toBe('codex_cli_rs');
     expect(secondOptions.headers['Chatgpt-Account-Id'] || secondOptions.headers['chatgpt-account-id']).toBe('chatgpt-account-123');
+    expect(secondOptions.headers.Version || secondOptions.headers.version).toBe('0.101.0');
+    expect(String(secondOptions.headers.Session_id || secondOptions.headers.session_id || '')).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(secondOptions.headers.Conversation_id || secondOptions.headers.conversation_id).toBeUndefined();
+    expect(secondOptions.headers['User-Agent'] || secondOptions.headers['user-agent']).toBe('CodexClient/1.0');
+    expect(secondOptions.headers.Accept || secondOptions.headers.accept).toBe('text/event-stream');
+    expect(secondOptions.headers.Connection || secondOptions.headers.connection).toBe('Keep-Alive');
     expect(response.json()?.output_text).toContain('ok after codex token refresh');
   });
 
@@ -205,6 +236,8 @@ describe('responses proxy codex oauth refresh', () => {
     const [, options] = fetchMock.mock.calls[0] as [string, any];
     const forwardedBody = JSON.parse(options.body);
     expect(forwardedBody.instructions).toBe('');
+    expect(forwardedBody.prompt_cache_key).toBeUndefined();
+    expect(forwardedBody.stream).toBe(true);
     expect(forwardedBody.input).toEqual([
       {
         type: 'message',
@@ -212,5 +245,226 @@ describe('responses proxy codex oauth refresh', () => {
         content: [{ type: 'input_text', text: 'hello codex' }],
       },
     ]);
+  });
+
+  it('preserves explicit prompt_cache_key for codex responses requests', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'resp_codex_with_cache_key',
+      object: 'response',
+      model: 'gpt-5.2-codex',
+      status: 'completed',
+      output_text: 'ok with cache key',
+      usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.2-codex',
+        prompt_cache_key: 'codex-cache-123',
+        input: 'hello codex',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, any];
+    const forwardedBody = JSON.parse(options.body);
+    expect(options.headers.Session_id || options.headers.session_id).toBe('codex-cache-123');
+    expect(options.headers.Conversation_id || options.headers.conversation_id).toBe('codex-cache-123');
+    expect(forwardedBody.prompt_cache_key).toBe('codex-cache-123');
+  });
+
+  it('strips generic downstream headers before forwarding codex responses upstream', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'resp_codex_header_filter',
+      object: 'response',
+      model: 'gpt-5.2-codex',
+      status: 'completed',
+      output_text: 'ok with filtered headers',
+      usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: {
+        'openai-beta': 'responses-2025-03-11',
+        'x-openai-client-user-agent': '{"client":"openclaw"}',
+        origin: 'https://openclaw.example',
+        referer: 'https://openclaw.example/app',
+        'user-agent': 'OpenClaw/1.0',
+        version: '0.202.0',
+        session_id: 'session-from-client',
+      },
+      payload: {
+        model: 'gpt-5.2-codex',
+        input: 'hello codex',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, any];
+    expect(options.headers.Version || options.headers.version).toBe('0.202.0');
+    expect(options.headers.Session_id || options.headers.session_id).toBe('session-from-client');
+    expect(options.headers['User-Agent'] || options.headers['user-agent']).toBe('OpenClaw/1.0');
+    expect(options.headers['openai-beta']).toBeUndefined();
+    expect(options.headers['x-openai-client-user-agent']).toBeUndefined();
+    expect(options.headers.origin).toBeUndefined();
+    expect(options.headers.referer).toBeUndefined();
+  });
+
+  it('records codex usage_limit_reached reset hints on upstream 429 failures', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        type: 'usage_limit_reached',
+        resets_at: 1773800400,
+        message: 'quota exceeded',
+      },
+    }), {
+      status: 429,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.2-codex',
+        input: 'hello codex',
+      },
+    });
+
+    expect(response.statusCode).toBe(429);
+    expect(recordOauthQuotaResetHintMock).toHaveBeenCalledWith({
+      accountId: 33,
+      statusCode: 429,
+      errorText: JSON.stringify({
+        error: {
+          type: 'usage_limit_reached',
+          resets_at: 1773800400,
+          message: 'quota exceeded',
+        },
+      }),
+    });
+  });
+
+  it('forces codex upstream responses requests to stream and aggregates the SSE payload for non-stream downstream callers', async () => {
+    fetchMock.mockResolvedValue(createSseResponse([
+      'event: response.created\n',
+      'data: {"type":"response.created","response":{"id":"resp_codex_stream","model":"gpt-5.4","created_at":1706000000,"status":"in_progress","output":[]}}\n\n',
+      'event: response.output_item.added\n',
+      'data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_codex_stream","type":"message","role":"assistant","status":"in_progress","content":[]}}\n\n',
+      'event: response.output_text.delta\n',
+      'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_codex_stream","delta":"pong"}\n\n',
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"id":"resp_codex_stream","model":"gpt-5.4","status":"completed","usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.4',
+        input: 'hello codex',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, any];
+    const forwardedBody = JSON.parse(options.body);
+    expect(forwardedBody.stream).toBe(true);
+    expect(forwardedBody.instructions).toBe('');
+    expect(forwardedBody.store).toBe(false);
+
+    expect(response.json()).toMatchObject({
+      id: 'resp_codex_stream',
+      model: 'gpt-5.4',
+      status: 'completed',
+      output_text: 'pong',
+      usage: {
+        input_tokens: 3,
+        output_tokens: 1,
+        total_tokens: 4,
+      },
+    });
+  });
+
+  it('preserves codex-required instructions and store fields across responses compatibility retries', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      error: { message: 'upstream_error', type: 'upstream_error' },
+    }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.2-codex',
+        input: 'hello codex',
+        metadata: { trace: 'compatibility-retry' },
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    const [, firstOptions] = fetchMock.mock.calls[0] as [string, any];
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, any];
+    const firstBody = JSON.parse(firstOptions.body);
+    const secondBody = JSON.parse(secondOptions.body);
+
+    expect(firstBody.instructions).toBe('');
+    expect(firstBody.store).toBe(false);
+    expect(firstBody.stream).toBe(true);
+    expect(secondBody.instructions).toBe('');
+    expect(secondBody.store).toBe(false);
+    expect(secondBody.stream).toBe(true);
+  });
+
+  it('does not record success when a streaming responses request ends with response.failed', async () => {
+    fetchMock.mockResolvedValue(createSseResponse([
+      'event: response.created\n',
+      'data: {"type":"response.created","response":{"id":"resp_codex_failed","model":"gpt-5.4","created_at":1706000000,"status":"in_progress","output":[]}}\n\n',
+      'event: response.failed\n',
+      'data: {"type":"response.failed","response":{"id":"resp_codex_failed","model":"gpt-5.4","status":"failed","error":{"message":"tool execution failed"}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.4',
+        input: 'hello codex',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('response.failed');
+    expect(response.body).not.toContain('response.completed');
+    expect(recordSuccessMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).toHaveBeenCalledTimes(1);
+    expect(insertedProxyLogs.at(-1)).toMatchObject({
+      status: 'failed',
+      httpStatus: 200,
+    });
+    expect(String(insertedProxyLogs.at(-1)?.errorMessage || '')).toContain('tool execution failed');
   });
 });

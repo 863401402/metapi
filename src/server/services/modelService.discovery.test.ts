@@ -481,4 +481,91 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(parsed.oauth.lastModelSyncAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
     expect(parsed.runtimeHealth?.state).toBe('unhealthy');
   });
+
+  it('discovers antigravity oauth models via fetchAvailableModels fallback using the oauth project id', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('antigravity oauth discovery should not call adapter.getModels'));
+    undiciFetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: 'unavailable' }),
+        text: async () => 'unavailable',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: {
+            'gemini-3-pro-preview': { displayName: 'Gemini 3 Pro Preview' },
+            'claude-sonnet-4-5-20250929': { displayName: 'Claude Sonnet 4.5' },
+          },
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'antigravity-site',
+      url: 'https://cloudcode-pa.googleapis.com',
+      platform: 'antigravity',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'antigravity-user@example.com',
+      accessToken: 'antigravity-access-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'antigravity',
+          email: 'antigravity-user@example.com',
+          projectId: 'project-demo',
+        },
+      }),
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      errorCode: null,
+      tokenScanned: 0,
+      discoveredByCredential: true,
+      discoveredApiToken: false,
+      modelCount: 2,
+      modelsPreview: ['gemini-3-pro-preview', 'claude-sonnet-4-5-20250929'],
+    });
+    expect(getModelsMock).not.toHaveBeenCalled();
+    expect(undiciFetchMock).toHaveBeenCalledTimes(2);
+    expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toBe('https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels');
+    expect(String(undiciFetchMock.mock.calls[1]?.[0] || '')).toBe('https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels');
+    expect(undiciFetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer antigravity-access-token',
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'antigravity/1.19.6 darwin/arm64',
+      }),
+    });
+    const discoveryHeaders = undiciFetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(discoveryHeaders).not.toHaveProperty('X-Goog-Api-Client');
+    expect(discoveryHeaders).not.toHaveProperty('Client-Metadata');
+    expect(JSON.parse(String(undiciFetchMock.mock.calls[0]?.[1]?.body || '{}'))).toEqual({
+      project: 'project-demo',
+    });
+
+    const rows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+    expect(rows.map((row) => row.modelName).sort()).toEqual([
+      'claude-sonnet-4-5-20250929',
+      'gemini-3-pro-preview',
+    ]);
+  });
 });

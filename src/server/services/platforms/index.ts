@@ -10,6 +10,8 @@ import { OpenAiAdapter } from './openai.js';
 import { CodexAdapter } from './codex.js';
 import { ClaudeAdapter } from './claude.js';
 import { GeminiAdapter } from './gemini.js';
+import { GeminiCliAdapter } from './geminiCli.js';
+import { AntigravityAdapter } from './antigravity.js';
 import { CliProxyApiAdapter } from './cliproxyapi.js';
 import { detectPlatformByTitle } from './titleHint.js';
 
@@ -19,6 +21,8 @@ const adapters: PlatformAdapter[] = [
   new CodexAdapter(),
   new ClaudeAdapter(),
   new GeminiAdapter(),
+  new GeminiCliAdapter(),
+  new AntigravityAdapter(),
   new CliProxyApiAdapter(),
   new AnyRouterAdapter(),
   new DoneHubAdapter(),
@@ -57,6 +61,9 @@ const platformAliases: Record<string, string> = {
   anthropic: 'claude',
   claude: 'claude',
   gemini: 'gemini',
+  'gemini-cli': 'gemini-cli',
+  antigravity: 'antigravity',
+  'anti-gravity': 'antigravity',
   google: 'gemini',
   // CLIProxyAPI aliases
   cliproxyapi: 'cliproxyapi',
@@ -97,6 +104,7 @@ function detectPlatformByUrlHint(url: string): string | undefined {
   ) {
     return 'gemini';
   }
+  if (normalized.includes('cloudcode-pa.googleapis.com')) return 'gemini-cli';
 
   // NewAPI-family forks and common aliases.
   if (normalized.includes('anyrouter')) return 'anyrouter';

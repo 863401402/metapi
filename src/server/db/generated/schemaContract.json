@@ -185,6 +185,24 @@
           "notNull": false,
           "defaultValue": "0",
           "primaryKey": false
+        },
+        "oauth_provider": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "oauth_account_key": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "oauth_project_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -850,6 +868,28 @@
         }
       }
     },
+    "route_group_sources": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "group_route_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_route_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        }
+      }
+    },
     "settings": {
       "columns": {
         "key": {
@@ -1095,6 +1135,12 @@
           "notNull": false,
           "defaultValue": "'weighted'",
           "primaryKey": false
+        },
+        "route_mode": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": "'pattern'",
+          "primaryKey": false
         }
       }
     }
@@ -1122,6 +1168,24 @@
       "table": "account_tokens",
       "columns": [
         "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "accounts_oauth_identity_idx",
+      "table": "accounts",
+      "columns": [
+        "oauth_provider",
+        "oauth_account_key",
+        "oauth_project_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "accounts_oauth_provider_idx",
+      "table": "accounts",
+      "columns": [
+        "oauth_provider"
       ],
       "unique": false
     },
@@ -1388,6 +1452,23 @@
       "unique": false
     },
     {
+      "name": "route_group_sources_group_source_unique",
+      "table": "route_group_sources",
+      "columns": [
+        "group_route_id",
+        "source_route_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "route_group_sources_source_route_id_idx",
+      "table": "route_group_sources",
+      "columns": [
+        "source_route_id"
+      ],
+      "unique": false
+    },
+    {
       "name": "site_disabled_models_site_id_idx",
       "table": "site_disabled_models",
       "columns": [
@@ -1401,6 +1482,15 @@
       "columns": [
         "site_id",
         "model_name"
+      ],
+      "unique": true
+    },
+    {
+      "name": "sites_platform_url_unique",
+      "table": "sites",
+      "columns": [
+        "platform",
+        "url"
       ],
       "unique": true
     },
@@ -1494,11 +1584,27 @@
       ]
     },
     {
+      "name": "route_group_sources_group_source_unique",
+      "table": "route_group_sources",
+      "columns": [
+        "group_route_id",
+        "source_route_id"
+      ]
+    },
+    {
       "name": "site_disabled_models_site_model_unique",
       "table": "site_disabled_models",
       "columns": [
         "site_id",
         "model_name"
+      ]
+    },
+    {
+      "name": "sites_platform_url_unique",
+      "table": "sites",
+      "columns": [
+        "platform",
+        "url"
       ]
     },
     {
@@ -1587,6 +1693,28 @@
         "id"
       ],
       "onDelete": "SET NULL"
+    },
+    {
+      "table": "route_group_sources",
+      "columns": [
+        "group_route_id"
+      ],
+      "referencedTable": "token_routes",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "route_group_sources",
+      "columns": [
+        "source_route_id"
+      ],
+      "referencedTable": "token_routes",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
     },
     {
       "table": "site_disabled_models",

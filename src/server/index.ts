@@ -25,7 +25,7 @@ import { buildStartupSummaryLines } from './services/startupInfo.js';
 import { repairStoredCreatedAtValues } from './services/storedTimestampRepairService.js';
 import { migrateSiteApiKeysToAccounts } from './services/siteApiKeyMigrationService.js';
 import { ensureDefaultSitesSeeded } from './services/defaultSiteSeedService.js';
-import { startCodexLoopbackCallbackServer, stopCodexLoopbackCallbackServer } from './services/oauth/localCallbackServer.js';
+import { startOAuthLoopbackCallbackServers, stopOAuthLoopbackCallbackServers } from './services/oauth/localCallbackServer.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
@@ -128,6 +128,16 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
 
   const systemProxyUrl = parseSettingFromMap<string>(settingsMap, 'system_proxy_url');
   if (typeof systemProxyUrl === 'string') config.systemProxyUrl = systemProxyUrl;
+
+  const proxyErrorKeywords = parseSettingFromMap<string[] | string>(settingsMap, 'proxy_error_keywords');
+  if (proxyErrorKeywords !== undefined) {
+    config.proxyErrorKeywords = toStringList(proxyErrorKeywords);
+  }
+
+  const proxyEmptyContentFailEnabled = parseSettingFromMap<boolean>(settingsMap, 'proxy_empty_content_fail_enabled');
+  if (typeof proxyEmptyContentFailEnabled === 'boolean') {
+    config.proxyEmptyContentFailEnabled = proxyEmptyContentFailEnabled;
+  }
 
   const checkinCron = parseSettingFromMap<string>(settingsMap, 'checkin_cron');
   if (typeof checkinCron === 'string' && checkinCron) config.checkinCron = checkinCron;
@@ -349,14 +359,14 @@ if (existsSync(webDir)) {
 // Start scheduler
 await startScheduler();
 try {
-  await startCodexLoopbackCallbackServer();
+  await startOAuthLoopbackCallbackServers();
 } catch (error) {
-  console.warn(`Failed to start Codex OAuth callback listener: ${(error as Error)?.message || 'unknown error'}`);
+  console.warn(`Failed to start OAuth callback listeners: ${(error as Error)?.message || 'unknown error'}`);
 }
 setLegacyProxyLogRetentionFallbackEnabled(!config.logCleanupConfigured);
 app.addHook('onClose', async () => {
   stopProxyLogRetentionService();
-  await stopCodexLoopbackCallbackServer();
+  await stopOAuthLoopbackCallbackServers();
 });
 
 // Start server

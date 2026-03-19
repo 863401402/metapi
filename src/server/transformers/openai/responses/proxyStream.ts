@@ -1,6 +1,7 @@
 import { createProxyStreamLifecycle } from '../../shared/protocolLifecycle.js';
 import { type ParsedSseEvent } from '../../shared/normalized.js';
 import { completeResponsesStream, createOpenAiResponsesAggregateState, failResponsesStream, serializeConvertedResponsesEvents } from './aggregator.js';
+import { openAiResponsesOutbound } from './outbound.js';
 import { openAiResponsesStream } from './stream.js';
 
 type StreamReader = {
@@ -13,9 +14,15 @@ type ResponseSink = {
   end(): void;
 };
 
+type ResponsesProxyStreamResult = {
+  status: 'completed' | 'failed';
+  errorMessage: string | null;
+};
+
 type ResponsesProxyStreamSessionInput = {
   modelName: string;
   successfulUpstreamPath: string;
+  strictTerminalEvents?: boolean;
   getUsage: () => {
     promptTokens: number;
     completionTokens: number;
@@ -33,20 +40,66 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
 }
 
+function getResponsesStreamFailureMessage(payload: unknown, fallback = 'upstream stream failed'): string {
+  if (isRecord(payload)) {
+    if (isRecord(payload.error) && typeof payload.error.message === 'string' && payload.error.message.trim()) {
+      return payload.error.message.trim();
+    }
+    if (typeof payload.message === 'string' && payload.message.trim()) {
+      return payload.message.trim();
+    }
+    if (isRecord(payload.response) && isRecord(payload.response.error) && typeof payload.response.error.message === 'string' && payload.response.error.message.trim()) {
+      return payload.response.error.message.trim();
+    }
+  }
+  return fallback;
+}
+
 export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSessionInput) {
   const streamContext = openAiResponsesStream.createContext(input.modelName);
   const responsesState = createOpenAiResponsesAggregateState(input.modelName);
   let finalized = false;
+  let terminalResult: ResponsesProxyStreamResult = {
+    status: 'completed',
+    errorMessage: null,
+  };
 
   const finalize = () => {
     if (finalized) return;
     finalized = true;
+    terminalResult = {
+      status: 'completed',
+      errorMessage: null,
+    };
     input.writeLines(completeResponsesStream(responsesState, streamContext, input.getUsage()));
+  };
+
+  const fail = (payload: unknown, fallbackMessage?: string) => {
+    if (finalized) return;
+    finalized = true;
+    terminalResult = {
+      status: 'failed',
+      errorMessage: getResponsesStreamFailureMessage(payload, fallbackMessage),
+    };
+    input.writeLines(failResponsesStream(responsesState, streamContext, input.getUsage(), payload));
+  };
+
+  const closeOut = () => {
+    if (finalized) return;
+    if (input.strictTerminalEvents) {
+      finalized = true;
+      terminalResult = {
+        status: 'failed',
+        errorMessage: 'stream closed before response.completed',
+      };
+      return;
+    }
+    finalize();
   };
 
   const handleEventBlock = (eventBlock: ParsedSseEvent): boolean => {
     if (eventBlock.data === '[DONE]') {
-      finalize();
+      closeOut();
       return true;
     }
 
@@ -71,8 +124,7 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
       || payloadType === 'response.failed'
     );
     if (isFailureEvent) {
-      input.writeLines(failResponsesStream(responsesState, streamContext, input.getUsage(), parsedPayload));
-      finalized = true;
+      fail(parsedPayload);
       return true;
     }
 
@@ -97,15 +149,61 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
   };
 
   return {
-    async run(reader: StreamReader | null | undefined, response: ResponseSink) {
+    consumeUpstreamFinalPayload(payload: unknown, fallbackText: string, response?: ResponseSink): ResponsesProxyStreamResult {
+      if (payload && typeof payload === 'object') {
+        input.onParsedPayload?.(payload);
+      }
+
+      const payloadType = (isRecord(payload) && typeof payload.type === 'string')
+        ? payload.type
+        : '';
+      if (payloadType === 'error' || payloadType === 'response.failed') {
+        fail(payload);
+        response?.end();
+        return terminalResult;
+      }
+
+      const normalizedFinal = openAiResponsesOutbound.normalizeFinal(payload, input.modelName, fallbackText);
+      streamContext.id = normalizedFinal.id;
+      streamContext.model = normalizedFinal.model;
+      streamContext.created = normalizedFinal.created;
+
+      const streamPayload = openAiResponsesOutbound.serializeFinal({
+        upstreamPayload: payload,
+        normalized: normalizedFinal,
+        usage: input.getUsage(),
+        serializationMode: 'response',
+      });
+      const createdPayload = {
+        ...streamPayload,
+        status: 'in_progress',
+        output: [],
+        output_text: '',
+      };
+
+      finalized = true;
+      terminalResult = {
+        status: 'completed',
+        errorMessage: null,
+      };
+      input.writeLines([
+        `event: response.created\ndata: ${JSON.stringify({ type: 'response.created', response: createdPayload })}\n\n`,
+        `event: response.completed\ndata: ${JSON.stringify({ type: 'response.completed', response: streamPayload })}\n\n`,
+        'data: [DONE]\n\n',
+      ]);
+      response?.end();
+      return terminalResult;
+    },
+    async run(reader: StreamReader | null | undefined, response: ResponseSink): Promise<ResponsesProxyStreamResult> {
       const lifecycle = createProxyStreamLifecycle<ParsedSseEvent>({
         reader,
         response,
         pullEvents: (buffer) => openAiResponsesStream.pullSseEvents(buffer),
         handleEvent: handleEventBlock,
-        onEof: finalize,
+        onEof: closeOut,
       });
       await lifecycle.run();
+      return terminalResult;
     },
   };
 }
